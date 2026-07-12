@@ -35,6 +35,40 @@ const SAMPLE_REQ_BODY = JSON.stringify({
 });
 
 describe('proxy usage extraction', () => {
+  it('transforms ChatGPT Codex /responses when model appears after the first 8 KiB', async () => {
+    const upstreamRequests: Request[] = [];
+    const restore = mockUpstream(async (req) => {
+      upstreamRequests.push(req.clone());
+      return new Response(JSON.stringify({
+        id: 'resp_codex_1', object: 'response', status: 'completed', output: [],
+        usage: { input_tokens: 400, output_tokens: 8, input_tokens_details: { cached_tokens: 0 } },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    const proxy = createProxy({
+      openAIUpstream: 'https://chatgpt.test/backend-api/codex',
+      transform: { charsPerToken: 1, minCompressChars: 1 },
+    });
+    const body = JSON.stringify({
+      instructions: 'System instruction. '.repeat(900),
+      input: [{ role: 'user', content: 'hi' }],
+      model: 'gpt-5.6-sol',
+    });
+    expect(body.indexOf('"model"')).toBeGreaterThan(8192);
+    const res = await proxy(new Request('http://localhost/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer chatgpt-test' },
+      body,
+    }));
+    await res.text();
+    restore();
+
+    expect(upstreamRequests).toHaveLength(1);
+    expect(upstreamRequests[0]!.url).toBe('https://chatgpt.test/backend-api/codex/responses');
+    expect(upstreamRequests[0]!.headers.get('authorization')).toBe('Bearer chatgpt-test');
+    const sent = JSON.parse(await upstreamRequests[0]!.text()) as { input?: unknown[] };
+    expect(JSON.stringify(sent.input)).toContain('input_image');
+  });
+
   it('extracts usage tokens from a non-stream JSON response', async () => {
     const restore = mockUpstream(
       () =>

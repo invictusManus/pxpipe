@@ -71,13 +71,14 @@ export interface ProxyEvent {
 /** Max chars of 4xx error body captured on ProxyEvent — enough for Anthropic's full error JSON. */
 const ERROR_BODY_MAX = 2048;
 
-/** Read the top-level `model` field from a /v1/messages body without parsing the full JSON.
+/** Read the top-level `model` field from a JSON request body.
  *  Returns null when not found — callers treat null as outside supported scope (fail-closed). */
 function readModelField(body: Uint8Array): string | null {
   try {
-    const head = new TextDecoder().decode(body.subarray(0, 8192));
-    const m = /"model"\s*:\s*"([^"]{1,80})"/.exec(head);
-    return m ? m[1]! : null;
+    const parsed = JSON.parse(new TextDecoder().decode(body)) as { model?: unknown };
+    return typeof parsed.model === 'string' && parsed.model.length > 0 && parsed.model.length <= 80
+      ? parsed.model
+      : null;
   } catch {
     return null;
   }
@@ -513,15 +514,19 @@ function isOpenAIChatPath(pathname: string): boolean {
 }
 
 function isOpenAIResponsesPath(pathname: string): boolean {
-  return pathname === '/v1/responses'
+  return pathname === '/responses'
+    || pathname === '/v1/responses'
     || pathname === '/openai/v1/responses'
     || pathname === '/openai/responses';
 }
 
 function isCanonicalOpenAIPath(pathname: string, headers: Headers, hasOpenAIKey: boolean): boolean {
-  const isModelsPath = pathname === '/v1/models' || pathname.startsWith('/v1/models/');
+  const isModelsPath = pathname === '/models' || pathname.startsWith('/models/')
+    || pathname === '/v1/models' || pathname.startsWith('/v1/models/');
   const looksOpenAIAuth = hasOpenAIKey || (headers.has('authorization') && !headers.has('x-api-key'));
   return pathname === '/v1/chat/completions'
+    || pathname === '/responses'
+    || pathname.startsWith('/responses/')
     || pathname === '/v1/responses'
     || pathname.startsWith('/v1/responses/')
     || (isModelsPath && looksOpenAIAuth);
